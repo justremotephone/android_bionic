@@ -1143,8 +1143,6 @@ typedef linked_list_t<soinfo> SoinfoLinkedList;
 typedef linked_list_t<const char> StringLinkedList;
 typedef std::vector<LoadTask*> LoadTaskList;
 
-static soinfo* find_library(const char* name, int rtld_flags, const android_dlextinfo* extinfo);
-
 // g_ld_all_shim_libs maintains the references to memory as it used
 // in the soinfo structures and in the g_active_shim_libs list.
 
@@ -1158,7 +1156,7 @@ static std::vector<std::string> g_ld_all_shim_libs;
 static linked_list_t<const std::string> g_active_shim_libs;
 
 static void parse_LD_SHIM_LIBS(const char* path) {
-  parse_path(path, " :", &g_ld_all_shim_libs);
+  split_path(path, " :", &g_ld_all_shim_libs);
   for (const auto& pair : g_ld_all_shim_libs) {
     g_active_shim_libs.push_back(&pair);
   }
@@ -1169,37 +1167,6 @@ static bool shim_lib_matches(const char *shim_lib, const char *realpath) {
   return sep != nullptr && strncmp(realpath, shim_lib, sep - shim_lib) == 0;
 }
 
-template<typename F>
-static void shim_libs_for_each(const char *const path, F action) {
-  if (path == nullptr) return;
-  INFO("Finding shim libs for \"%s\"\n", path);
-  std::vector<const std::string *> matched;
-
-  g_active_shim_libs.for_each([&](const std::string *a_pair) {
-    const char *pair = a_pair->c_str();
-    if (shim_lib_matches(pair, path)) {
-      matched.push_back(a_pair);
-    }
-  });
-
-  g_active_shim_libs.remove_if([&](const std::string *a_pair) {
-    const char *pair = a_pair->c_str();
-    return shim_lib_matches(pair, path);
-  });
-
-  for (const auto& one_pair : matched) {
-    const char* const pair = one_pair->c_str();
-    const char* sep = strchr(pair, '|');
-    soinfo *child = find_library(sep+1, RTLD_GLOBAL, nullptr);
-    if (child) {
-      INFO("Using shim lib \"%s\"\n", sep+1);
-      action(child);
-    } else {
-      PRINT("Shim lib \"%s\" can not be loaded, ignoring.", sep+1);
-    }
-  }
-}
-
 // This function walks down the tree of soinfo dependencies
 // in breadth-first order and
 //   * calls action(soinfo* si) for each node, and
@@ -1208,7 +1175,7 @@ static void shim_libs_for_each(const char *const path, F action) {
 // walk_dependencies_tree returns false if walk was terminated
 // by the action and true otherwise.
 template<typename F>
-static bool walk_dependencies_tree(soinfo* root_soinfos[], size_t root_soinfos_size, bool do_shims, F action) {
+static bool walk_dependencies_tree(soinfo* root_soinfos[], size_t root_soinfos_size, F action) {
   SoinfoLinkedList visit_list;
   SoinfoLinkedList visited;
 
@@ -1228,13 +1195,6 @@ static bool walk_dependencies_tree(soinfo* root_soinfos[], size_t root_soinfos_s
 
     visited.push_back(si);
 
-    if (do_shims) {
-      shim_libs_for_each(si->get_realpath(), [&](soinfo* child) {
-        si->add_child(child);
-        visit_list.push_back(child);
-      });
-    }
-
     si->get_children().for_each([&](soinfo* child) {
       visit_list.push_back(child);
     });
@@ -1250,7 +1210,7 @@ static const ElfW(Sym)* dlsym_handle_lookup(soinfo* root, soinfo* skip_until,
   const ElfW(Sym)* result = nullptr;
   bool skip_lookup = skip_until != nullptr;
 
-  walk_dependencies_tree(&root, 1, false, [&](soinfo* current_soinfo) {
+  walk_dependencies_tree(&root, 1, [&](soinfo* current_soinfo) {
     if (skip_lookup) {
       skip_lookup = current_soinfo != skip_until;
       return true;
@@ -1994,6 +1954,16 @@ static bool find_libraries(android_namespace_t* ns,
 
     soinfo* si = task->get_soinfo();
 
+    INFO("Finding shim libs for \"%s\"\n", si->get_realpath());
+    g_active_shim_libs.for_each([&](const std::string *a_pair) {
+      const char *pair = a_pair->c_str();
+      if (shim_lib_matches(pair, si->get_realpath())) {
+        const char* sep = strchr(pair, '|');
+        PRINT("Using shim lib \"%s\"\n", sep+1);
+        load_tasks.push_back(LoadTask::create(sep+1, start_with, &readers_map));
+      }
+    });
+    
     if (is_dt_needed) {
       needed_by->add_child(si);
     }
@@ -2058,7 +2028,6 @@ static bool find_libraries(android_namespace_t* ns,
   walk_dependencies_tree(
       (start_with != nullptr && add_as_children) ? &start_with : soinfos,
       (start_with != nullptr && add_as_children) ? 1 : soinfos_count,
-      true,
       [&] (soinfo* si) {
     local_group.push_back(si);
     return true;

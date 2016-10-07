@@ -1179,17 +1179,16 @@ const char* fix_dt_needed(const char* dt_needed, const char* sopath __unused) {
 
 template<typename F>
 static void for_each_dt_needed(const ElfReader& elf_reader, F action) {
+  for_each_matching_shim(elf_reader.name(), action);
   for (const ElfW(Dyn)* d = elf_reader.dynamic(); d->d_tag != DT_NULL; ++d) {
     if (d->d_tag == DT_NEEDED) {
       action(fix_dt_needed(elf_reader.get_string(d->d_un.d_val), elf_reader.name()));
     }
   }
-  for_each_matching_shim(si->get_realpath(), action);
 }
 
 static bool find_loaded_library_by_inode(android_namespace_t* ns,
                                          const struct stat& file_stat,
-                                         off64_t file_offset,
                                          bool search_linked_namespaces,
                                          soinfo** candidate) {
 
@@ -1213,7 +1212,6 @@ static bool find_loaded_library_by_inode(android_namespace_t* ns,
         return true;
       }
     }
-  for_each_matching_shim(elf_reader.name(), action);
   }
 
   return *candidate != nullptr;

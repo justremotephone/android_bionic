@@ -1181,6 +1181,7 @@ static void for_each_dt_needed(const ElfReader& elf_reader, F action) {
 
 static bool find_loaded_library_by_inode(android_namespace_t* ns,
                                          const struct stat& file_stat,
+                                         off64_t file_offset,
                                          bool search_linked_namespaces,
                                          soinfo** candidate) {
 
